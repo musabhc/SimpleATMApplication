@@ -16,7 +16,7 @@ namespace SimpleATMApplication
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new SimpleATMApp());
+            Application.Run(new LoginScreen());
         }
     }
 }
