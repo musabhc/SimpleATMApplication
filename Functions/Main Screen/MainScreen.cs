@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq;
 using System.Windows.Forms;
 
 namespace SimpleATMApplication
@@ -23,44 +22,64 @@ namespace SimpleATMApplication
             }
         }
 
-        decimal accountBalance;
+        private decimal accountBalance;
+        private readonly List<TransferTransaction> transactions = new List<TransferTransaction>();
+        private readonly int userId;
+        private readonly DatabaseConnection dbConnection = new DatabaseConnection();
 
-        // List of transactions
-        private List<TransferTransaction> _transactions = new List<TransferTransaction>();
-        private readonly int _userId;
-        private readonly DatabaseConnection _dbConnection = new DatabaseConnection();
+        private const int MaxRecentTransactions = 5;
 
         public MainScreen(int userId)
         {
             InitializeComponent();
-            _userId = userId;
+            this.userId = userId;
         }
 
         private void MainScreen_Load(object sender, EventArgs e)
         {
-            AlignScreen();
-            InitializeListView();
+            ConfigureScreen();
+            InitializeTransactionListView();
             LoadRecentTransactions();
-            LoadBalance();
+            LoadAccountBalance();
+        }
+
+        private void ConfigureScreen()
+        {
+            Rectangle screenBounds = Screen.PrimaryScreen.Bounds;
+            this.Size = new Size(screenBounds.Width, screenBounds.Height);
+            this.Location = new Point(0, 0);
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.WindowState = FormWindowState.Maximized;
+            this.TopMost = true;
+        }
+
+        private void InitializeTransactionListView()
+        {
+            transactionsViewList.Columns.Clear();
+            transactionsViewList.Columns.Add("Recipient", 100);
+            transactionsViewList.Columns.Add("Description", 125);
+            transactionsViewList.Columns.Add("Amount", 100);
+            transactionsViewList.Columns.Add("Datetime", 150);
+            transactionsViewList.View = View.Details;
         }
 
         private void LoadRecentTransactions()
         {
-
             transactionsViewList.Items.Clear();
 
             try
             {
-                string connectionString = _dbConnection.GetConnectionString();
+                string connectionString = dbConnection.GetConnectionString();
                 using (var connection = new MySqlConnection(connectionString))
                 {
                     connection.Open();
                     string query = "SELECT transferid, recipient_name, amount, transfer_datetime, description FROM transfers " +
-                                   "WHERE accountid = @userId ORDER BY transfer_datetime DESC LIMIT 5";
+                                   "WHERE accountid = @userId ORDER BY transfer_datetime DESC LIMIT @limit";
 
                     using (var command = new MySqlCommand(query, connection))
                     {
-                        command.Parameters.AddWithValue("@userId", _userId);
+                        command.Parameters.AddWithValue("@userId", userId);
+                        command.Parameters.AddWithValue("@limit", MaxRecentTransactions);
 
                         using (var reader = command.ExecuteReader())
                         {
@@ -73,29 +92,27 @@ namespace SimpleATMApplication
                                     Amount = reader.GetDecimal("amount"),
                                     Description = reader.GetString("description")
                                 };
-                                AddTransaction(transaction);
+                                AddTransactionToListView(transaction);
                             }
                         }
                     }
                 }
             }
-            catch (MySqlException sqlEx)
+            catch (MySqlException ex)
             {
-                Console.WriteLine("SQL Error: " + sqlEx.Message);
-                MessageBox.Show("An error occurred while retrieving the balance from the database.");
+                ShowError("SQL Error: " + ex.Message);
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error: " + ex.Message);
-                MessageBox.Show("An unexpected error occurred.");
+                ShowError("An unexpected error occurred: " + ex.Message);
             }
         }
 
-        private void LoadBalance()
+        private void LoadAccountBalance()
         {
             try
             {
-                string connectionString = _dbConnection.GetConnectionString();
+                string connectionString = dbConnection.GetConnectionString();
                 using (var connection = new MySqlConnection(connectionString))
                 {
                     connection.Open();
@@ -103,161 +120,113 @@ namespace SimpleATMApplication
 
                     using (var command = new MySqlCommand(query, connection))
                     {
-                        command.Parameters.AddWithValue("@userId", _userId);
-
+                        command.Parameters.AddWithValue("@userId", userId);
                         var balance = command.ExecuteScalar();
 
                         if (balance != null)
                         {
                             accountBalance = Convert.ToDecimal(balance);
-                            Console.WriteLine($"Balance: {accountBalance}");
-                            balanceShowText.Text = accountBalance.ToString();
+                            balanceShowText.Text = accountBalance.ToString("C");
                         }
                         else
                         {
-                            Console.WriteLine("Account not found.");
+                            ShowError("Account not found.");
                         }
                     }
                 }
             }
-            catch (MySqlException sqlEx)
+            catch (MySqlException ex)
             {
-                Console.WriteLine("SQL Error: " + sqlEx.Message);
-                MessageBox.Show("An error occurred while retrieving the balance from the database.");
+                ShowError("SQL Error: " + ex.Message);
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error: " + ex.Message);
-                MessageBox.Show("An unexpected error occurred.");
+                ShowError("An unexpected error occurred: " + ex.Message);
             }
         }
 
-        private void AddTransaction(TransferTransaction transaction)
+        private void AddTransactionToListView(TransferTransaction transaction)
         {
-            if (_transactions.Count >= 5)
+            if (transactions.Count >= MaxRecentTransactions)
             {
-                _transactions.RemoveAt(0); // Remove the oldest transaction if the list exceeds 5
+                transactions.RemoveAt(0);
             }
-            _transactions.Add(transaction);
+            transactions.Add(transaction);
 
-            // Create a new ListViewItem for the transaction
-            var listViewItem = new ListViewItem(transaction.Recipient);
+            var listViewItem = new ListViewItem(transaction.Recipient)
+            {
+                SubItems =
+                {
+                    transaction.Description,
+                    transaction.Amount.ToString("C"),
+                    transaction.TransactionDate.ToString("g")
+                }
+            };
 
-            // Add subitems to the ListViewItem
-            listViewItem.SubItems.Add(transaction.Description);
-            listViewItem.SubItems.Add(transaction.Amount.ToString("C"));
-            listViewItem.SubItems.Add(transaction.TransactionDate.ToString("g"));
-
-            // Add the ListViewItem to the ListView
             transactionsViewList.Items.Add(listViewItem);
         }
 
-        private void InitializeListView()
+        private void ShowError(string message)
         {
-            // Clear existing columns
-            transactionsViewList.Columns.Clear();
-
-            // Add columns
-            transactionsViewList.Columns.Add("Recipient", 100);
-            transactionsViewList.Columns.Add("Description", 125);
-            transactionsViewList.Columns.Add("Amount", 100);
-            transactionsViewList.Columns.Add("Datetime", 150);
-
-            // Optionally set view to Details
-            transactionsViewList.View = View.Details;
-        }
-
-
-        private void AlignScreen()
-        {
-            Rectangle screenBounds = Screen.PrimaryScreen.Bounds;
-            this.Size = new Size(screenBounds.Width, screenBounds.Height);
-            this.Location = new Point(0, 0);
-            this.FormBorderStyle = FormBorderStyle.None;
-            this.WindowState = FormWindowState.Maximized;
-            this.TopMost = true;
+            MessageBox.Show(message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
         private void withdrawBTN_Click(object sender, EventArgs e)
         {
-            // Show fast withdraw buttons
-            fastWithdraw_Back.Visible = true;
-            fastWithdraw_100.Visible = true;
-            fastWithdraw_200.Visible = true;
-            fastWithdraw_500.Visible = true;
-            fastWithdraw_1000.Visible = true;
-
-            withdrawBTN.Visible = false;
-
-
-
+            ToggleFastWithdrawButtons(true);
         }
 
         private void fastWithdraw_Back_Click(object sender, EventArgs e)
         {
-            fastWithdraw_Back.Visible = false;
-            fastWithdraw_100.Visible = false;
-            fastWithdraw_200.Visible = false;
-            fastWithdraw_500.Visible = false;
-            fastWithdraw_1000.Visible = false;
-
-            withdrawBTN.Visible = true;
-
-
+            ToggleFastWithdrawButtons(false);
         }
 
-        private void fastWithdraw_100_Click(object sender, EventArgs e)
+        private void ToggleFastWithdrawButtons(bool visible)
         {
-            withdrawProccess(100);
+            fastWithdraw_Back.Visible = visible;
+            fastWithdraw_100.Visible = visible;
+            fastWithdraw_200.Visible = visible;
+            fastWithdraw_500.Visible = visible;
+            fastWithdraw_1000.Visible = visible;
+            withdrawBTN.Visible = !visible;
         }
 
-        private void fastWithdraw_200_Click(object sender, EventArgs e)
+        private void FastWithdrawButton_Click(object sender, EventArgs e)
         {
-            withdrawProccess(200);
+            if (sender is Button button)
+            {
+                if (decimal.TryParse(button.Tag.ToString(), out decimal amount))
+                {
+                    ProcessWithdrawal(amount);
+                }
+            }
         }
 
-        private void fastWithdraw_500_Click(object sender, EventArgs e)
-        {
-            withdrawProccess(500);
-        }
-
-        private void fastWithdraw_1000_Click(object sender, EventArgs e)
-        {
-            withdrawProccess(1000);
-        }
-
-        private void fastWithdraw_other_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void withdrawProccess(decimal amount)
+        private void ProcessWithdrawal(decimal amount)
         {
             if (accountBalance < amount)
             {
-                MessageBox.Show("Insufficient Funds");
+                ShowError("Insufficient Funds");
+                return;
+            }
+
+            if (UpdateAccountBalance(amount) && RecordWithdrawal(amount))
+            {
+                MessageBox.Show("Cash Withdrawal Success!");
+                LoadAccountBalance();
+                LoadRecentTransactions();
             }
             else
             {
-                MessageBox.Show("Cash Withdrawal in Progress");
-                if (UpdateBalanceDB(amount) && InsertWithdrawDB(amount))
-                {
-                    MessageBox.Show("Cash Withdrawal Success!");
-                    LoadBalance();
-                    LoadRecentTransactions();
-                }
-                else
-                {
-                    MessageBox.Show("Cash Withdrawal Failed!");
-                }
+                ShowError("Cash Withdrawal Failed!");
             }
         }
 
-        private bool InsertWithdrawDB(decimal amount)
+        private bool RecordWithdrawal(decimal amount)
         {
             try
             {
-                string connectionString = _dbConnection.GetConnectionString();
+                string connectionString = dbConnection.GetConnectionString();
                 using (var connection = new MySqlConnection(connectionString))
                 {
                     connection.Open();
@@ -266,80 +235,56 @@ namespace SimpleATMApplication
 
                     using (var command = new MySqlCommand(query, connection))
                     {
-                        command.Parameters.AddWithValue("@userId", _userId);
+                        command.Parameters.AddWithValue("@userId", userId);
                         command.Parameters.AddWithValue("@recipientName", "ATM");
                         command.Parameters.AddWithValue("@description", $"Withdrawal of {amount:C} from ATM");
                         command.Parameters.AddWithValue("@amount", amount);
                         command.Parameters.AddWithValue("@transferDatetime", DateTime.Now);
 
-                        int rowsAffected = command.ExecuteNonQuery();
-
-                        if (rowsAffected > 0)
-                        {
-                            Console.WriteLine("Transaction inserted successfully.");
-                            return true;
-                        }
-                        else
-                        {
-                            Console.WriteLine("Failed to insert transaction.");
-                            return false;
-                        }
+                        return command.ExecuteNonQuery() > 0;
                     }
                 }
             }
-            catch (MySqlException sqlEx)
+            catch (MySqlException ex)
             {
-                Console.WriteLine("SQL Error: " + sqlEx.Message);
-                MessageBox.Show("An error occurred while inserting the transaction into the database.");
+                ShowError("SQL Error: " + ex.Message);
                 return false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error: " + ex.Message);
-                MessageBox.Show("An unexpected error occurred.");
+                ShowError("An unexpected error occurred: " + ex.Message);
                 return false;
             }
-            
         }
 
-        private bool UpdateBalanceDB(decimal amount) 
+        private bool UpdateAccountBalance(decimal amount)
         {
             decimal newBalance = accountBalance - amount;
             try
             {
-                string connectionString = _dbConnection.GetConnectionString();
+                string connectionString = dbConnection.GetConnectionString();
                 using (var connection = new MySqlConnection(connectionString))
                 {
                     connection.Open();
                     string query = "UPDATE accounts SET balance = @newBalance WHERE id = @userId";
+
                     using (var command = new MySqlCommand(query, connection))
                     {
-                        command.Parameters.AddWithValue("@userId", _userId);
+                        command.Parameters.AddWithValue("@userId", userId);
                         command.Parameters.AddWithValue("@newBalance", newBalance);
-                        int rowsAffected = command.ExecuteNonQuery();
-                        if (rowsAffected > 0)
-                        {
-                            Console.WriteLine("Transaction inserted successfully.");
-                            return true;
-                        }
-                        else
-                        {
-                            Console.WriteLine("Failed to insert transaction.");
-                            return false;
-                        }
+
+                        return command.ExecuteNonQuery() > 0;
                     }
                 }
             }
-            catch (MySqlException sqlEx)
+            catch (MySqlException ex)
             {
-                Console.WriteLine("SQL Error: " + sqlEx.Message);
-                MessageBox.Show("An error occurred while inserting the transaction into the database.");
+                ShowError("SQL Error: " + ex.Message);
                 return false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error: " + ex.Message);
-                MessageBox.Show("An unexpected error occurred.");
+                ShowError("An unexpected error occurred: " + ex.Message);
                 return false;
             }
         }
